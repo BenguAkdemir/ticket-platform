@@ -9,7 +9,7 @@ Bu bir öğrenme projesidir; amaç uygulama çıkarmak değil, mimari prensipler
 
 | # | Klasör | Öğrenme hedefi | Durum |
 |---|---|---|---|
-| 1 | `infra/` | Terraform: provider, variable, state, module | Başladı |
+| 1 | `infra/` | Terraform: provider, variable, state, module | Bitti (2026-10-08) |
 | 2 | `server/` | Onion ve dependency inversion | Bekliyor |
 | 3 | `policy/` | Kararı koddan ayırmak (OPA) | Bekliyor |
 | 4 | `gateway/` | Reverse proxy ve middleware zinciri | Bekliyor |
