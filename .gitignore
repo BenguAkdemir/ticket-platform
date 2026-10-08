@@ -1,0 +1,16 @@
+# Terraform: state ve yerel dosyalar git'e girmez (.terraform.lock.hcl girer)
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+
+# Anahtarlar (4. parça)
+*.pem
+
+# macOS
+.DS_Store
