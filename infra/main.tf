@@ -19,6 +19,8 @@ resource "docker_container" "postgres" {
     "POSTGRES_PASSWORD=${var.db_password}",
   ]
 
+  wait = true
+
   networks_advanced {
     name = docker_network.platform.name
   }
@@ -32,5 +34,12 @@ resource "docker_container" "postgres" {
     internal = 5432
     external = var.db_port
     ip       = "127.0.0.1"
+  }
+
+  healthcheck {
+    test     = ["CMD", "pg_isready", "-U", "postgres"]
+    interval = "5s"
+    timeout  = "3s"
+    retries  = 5
   }
 }
