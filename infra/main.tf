@@ -2,44 +2,25 @@ resource "docker_network" "platform" {
   name = "ticket-platform"
 }
 
-resource "docker_image" "postgres" {
-  name         = "postgres:18"
-  keep_locally = true
+module "postgres" {
+  source = "./modules/postgres"
+
+  db_password  = var.db_password
+  db_port      = var.db_port
+  network_name = docker_network.platform.name
 }
 
-resource "docker_volume" "postgres_data" {
-  name = "ticket-postgres-data"
+moved {
+  from = docker_image.postgres
+  to   = module.postgres.docker_image.postgres
 }
 
-resource "docker_container" "postgres" {
-  name  = "ticket-postgres"
-  image = docker_image.postgres.image_id
+moved {
+  from = docker_volume.postgres_data
+  to   = module.postgres.docker_volume.postgres_data
+}
 
-  env = [
-    "POSTGRES_PASSWORD=${var.db_password}",
-  ]
-
-  wait = true
-
-  networks_advanced {
-    name = docker_network.platform.name
-  }
-
-  volumes {
-    volume_name    = docker_volume.postgres_data.name
-    container_path = "/var/lib/postgresql"
-  }
-
-  ports {
-    internal = 5432
-    external = var.db_port
-    ip       = "127.0.0.1"
-  }
-
-  healthcheck {
-    test     = ["CMD", "pg_isready", "-U", "postgres"]
-    interval = "5s"
-    timeout  = "3s"
-    retries  = 5
-  }
+moved {
+  from = docker_container.postgres
+  to   = module.postgres.docker_container.postgres
 }
