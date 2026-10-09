@@ -20,6 +20,21 @@ export class Ticket {
     this.openedBy = openedBy;
   }
 
+  static restore(state: {
+    id: string;
+    title: string;
+    openedBy: string;
+    status: TicketStatus;
+    decidedBy: string | null;
+    rejectReason: string | null;
+  }): Ticket {
+    const ticket = new Ticket(state.id, state.title, state.openedBy);
+    ticket.#status = state.status;
+    ticket.#decidedBy = state.decidedBy;
+    ticket.#rejectReason = state.rejectReason;
+    return ticket;
+  } 
+
   get status(): TicketStatus {
     return this.#status;
   }

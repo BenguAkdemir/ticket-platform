@@ -6,8 +6,14 @@ import { InMemoryTicketRepository } from "./infrastructure/in-memory-ticket-repo
 import { SubmitTicket } from "./application/submit-ticket.ts";
 import { ApproveTicket } from "./application/approve-ticket.ts";
 import { RejectTicket } from "./application/reject-ticket.ts";
+import pg from "pg";
+import { PostgresTicketRepository } from "./infrastructure/postgres-ticket-repository.ts";
 
-const repository = new InMemoryTicketRepository();
+const databaseUrl = process.env.DATABASE_URL;
+if (databaseUrl === undefined){
+    throw new Error("DATABASE_URL environment variable is not set");
+}
+const repository = new PostgresTicketRepository(new pg.Pool({ connectionString: databaseUrl }));
 
 const app = createApp({
   openTicket: new OpenTicket(repository, randomUUID),

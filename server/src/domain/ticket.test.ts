@@ -77,3 +77,18 @@ test("S5: rejected ticket bir daha değişmez", () => {
   assert.throws(() => ticket.approve("u2"), InvalidTransitionError);
   assert.throws(() => ticket.reject("u2", "Bütçe yok"), InvalidTransitionError);
 });
+
+test("restore: kayıtlı durumdan ticket kurar ve kurallar geçerli kalır", () => {
+  const ticket = Ticket.restore({
+    id: "t-1",
+    title: "Yazıcı bozuk",
+    openedBy: "u1",
+    status: "rejected",
+    decidedBy: "u2",
+    rejectReason: "Bütçe yok",
+  });
+  assert.equal(ticket.status,"rejected");
+  assert.equal(ticket.decidedBy, "u2");
+  assert.equal(ticket.rejectReason, "Bütçe yok");
+  assert.throws(() => ticket.submit(), InvalidTransitionError);
+});

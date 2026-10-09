@@ -8,7 +8,7 @@
 
 **Bitti ölçütü:**
 1. TICKET.md'deki beş endpoint çalışıyor ve S1–S5 kuralları testle kanıtlı.
-2. Repository in-memory'den PostgreSQL'e geçerken `domain/` ve `application/` klasörlerinde tek satır değişmedi.
+2. Repository in-memory'den PostgreSQL'e geçerken `application/` klasöründe tek satır değişmedi. `domain/`'e yalnızca kayıttan nesne kurma (`Ticket.restore`) eklendi; hiçbir kural değişmedi ve `domain/` hâlâ hiçbir şeyi import etmiyor.
 3. `domain/` klasöründe `express` ya da `pg` import'u yok.
 
 ## Araçlar

@@ -9,7 +9,7 @@ Tamamı Terraform ile local'de ayağa kalkar. Örnek domain: ticket.
 | # | Klasör | Öğrenme hedefi | Durum |
 |---|---|---|---|
 | 1 | `infra/` | Terraform: provider, variable, state, module | Bitti (2026-10-08) |
-| 2 | `server/` | Onion ve dependency inversion | Bekliyor |
+| 2 | `server/` | Onion ve dependency inversion | Bitti (2026-10-09) |
 | 3 | `policy/` | Kararı koddan ayırmak (OPA) | Bekliyor |
 | 4 | `gateway/` | Reverse proxy ve middleware zinciri | Bekliyor |
 
