@@ -3,7 +3,6 @@
 Go gateway + OPA authorization + onion architecture server (Node.js / TypeScript).
 Tamamı Terraform ile local'de ayağa kalkar. Örnek domain: ticket.
 
-Bu bir öğrenme projesidir; amaç uygulama çıkarmak değil, mimari prensipleri küçük ölçekte elle kurmaktır.
 
 ## Parçalar
 
