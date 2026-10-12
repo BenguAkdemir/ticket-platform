@@ -1,6 +1,8 @@
 # Parça 4 — `gateway/` (Go)
 
-> v1.0 · 2026-10-08 · Onaylandı
+> v1.1 · 2026-10-12 · Onaylandı
+>
+> v1.1: timeout ve shutdown 6. adımdan 2. adıma alındı; `/healthz` ve ölçüm adımı (7) eklendi; deneyler ve yeni tuzaklar eklendi.
 
 **Tek öğrenme hedefi:** Reverse proxy ve middleware zinciri: bir request server'a ulaşmadan önce sırayla hangi kontrollerden geçer.
 
@@ -45,14 +47,25 @@ request
 
 | # | Adım |
 |---|---|
-| 1 | Düz reverse proxy: gelen her request'i server'a ilet (`httputil.ReverseProxy`, `Rewrite`) |
-| 2 | Middleware zinciri: request ID üret, her request için tek satır structured log yaz |
-| 3 | JWT doğrulama: RS256 public key ile. `devtoken` komutunu yaz |
-| 4 | Route → action eşlemesi (TICKET.md) ve OPA sorgusu |
-| 5 | Kimlik header'ları: client'tan gelen `X-User-*` header'larını sil, doğrulanmış token'dan yeniden yaz |
-| 6 | Server timeout'ları ve graceful shutdown |
+| 1 | Düz reverse proxy: gelen her request'i server'a ilet (`httputil.ReverseProxy`, `Rewrite`). Gateway'in kendi `/healthz` endpoint'i |
+| 2 | `http.Server` timeout'ları ve graceful shutdown. Deney: Slowloris |
+| 3 | Middleware zinciri: request ID üret, her request için tek satır structured log (`log/slog`). İlk testler `net/http/httptest` ile |
+| 4 | JWT doğrulama: RS256 public key ile; key başlangıçta bir kez okunur. `devtoken` komutunu yaz |
+| 5 | Route → action eşlemesi (TICKET.md) ve OPA sorgusu: kısa timeout, fail-closed, `result` yoksa reddet |
+| 6 | Kimlik header'ları: client'tan gelen `X-User-*` header'larını sil, doğrulanmış token'dan yeniden yaz |
+| 7 | Ölçüm: yük testi ile katman başına gecikme; backend transport ayarı; 502 ve 504 ayrımı için kendi `ErrorHandler`'ın |
 
-## Kabul testleri
+Timeout'lar 2. adımda, çünkü sonraki her adım güvenli varsayılanlara sahip bir server üzerinde çalışmalı.
+
+## Deneyler
+
+| Deney | Neyi gösterir |
+|---|---|
+| Slowloris (`nc` ile header'ı bitmeyen bağlantı) | Timeout yokken bağlantı açık kalır; `ReadHeaderTimeout` ile kapanır |
+| Katman başına gecikme (yük testi aracı) | Düz proxy, + JWT, + OPA: her katmanın maliyeti. Sayılar tahmin edilmez, ölçülür |
+| Bağlantı havuzu | Varsayılan transport ile `MaxIdleConnsPerHost` yükseltilmiş transport arasındaki fark |
+
+## Kabul testleri## Kabul testleri
 
 | Durum | Beklenen |
 |---|---|
@@ -85,6 +98,10 @@ request
 | Timeout yok | `http.Server` alanlarında (`ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, `IdleTimeout`) sıfır değer "timeout yok" demektir | Go, `net/http` kaynak kodu |
 | Shutdown | `Shutdown` çağrıldığında `ListenAndServe` hemen döner; program `Shutdown` bitene kadar beklemezse açık request'ler kesilir | Go, `net/http` kaynak kodu |
 | OPA'da `result` yoksa | Undefined karar HTTP 200 ve boş cevap olarak gelir; bu "izin" değildir | OPA, REST API |
+| Varsayılan `ErrorHandler` | Her backend hatasında 502 döner; backend'in kapalı olması ile cevap vermemesi ayırt edilmez | Go, `net/http/httputil` kaynak kodu |
+| Bağlantı havuzu | `ReverseProxy` varsayılan olarak `http.DefaultTransport` kullanır; host başına boşta tutulan bağlantı sayısı `DefaultMaxIdleConnsPerHost = 2` | Go, `net/http` kaynak kodu |
+| Body'yi okumak | Proxy body'yi stream eder. Middleware'de `io.ReadAll` her request'i belleğe alır; gateway body'ye dokunmaz | Go, `net/http/httputil` |
+| Token'ı loglamak | `Authorization` header'ı log'a yazılmaz; log'a erişen token'ı kullanabilir | Tasarım tercihi |
 
 ## Kapsam dışı
 

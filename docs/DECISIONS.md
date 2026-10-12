@@ -83,3 +83,16 @@ Sertifika çalışmasının yanında, parça parça ilerler.
 
 Kafka / RabbitMQ · Redis · Kubernetes · service mesh · ArgoCD · Vault · Keycloak · NestJS · frontend.
 Hiçbiri "kötü" olduğu için değil; bu dört parçanın öğrettiği şeye bir şey eklemedikleri için yok.
+
+## Proje sonunda tartışılacak
+
+Gateway planlanırken (2026-10-12) kapsam dışı bırakıldı; Bengü'nün isteğiyle proje sonunda ek geliştirme fikri olarak ele alınacak.
+
+| Konu | Neden şimdi değil |
+|---|---|
+| Rate limiting | Ölçülecek bir ihtiyaç yok; tek başına bir ek bölüm olabilir |
+| TLS termination | Sertifika yönetimi ayrı bir konu |
+| Load balancing (birden fazla gateway ya da server kopyası) | Tek kopya ile çalışıyoruz; gateway state tutmayacak şekilde yazılıyor |
+| Response caching | Ticket verisi değişken; ne zaman cache'lenebileceği ayrı bir tasarım sorusu |
+| OPA kararlarını cache'lemek | Policy değişince eski kararın yaşaması riski |
+| Metrics (Prometheus) | Ayrı bir altyapı ister; şimdilik structured log yeterli |
