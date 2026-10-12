@@ -14,7 +14,7 @@ simple so the architecture stays in focus.
 |---|------|----------------------|--------|
 | 1 | `infra/` | Terraform: providers, variables, state, modules | Done |
 | 2 | `server/` | Onion architecture and dependency inversion (Node.js, TypeScript) | Done |
-| 3 | `policy/` | Authorization rules separated from code (OPA, Rego) | Planned |
+| 3 | `policy/` | Authorization rules separated from code (OPA, Rego) | Done |
 | 4 | `gateway/` | Reverse proxy and middleware chain (Go) | Planned |
 | 5 | Wiring | Everything started with a single `terraform apply` | Planned |
 
@@ -28,7 +28,8 @@ client -> gateway (Go) -> server (Node.js) -> PostgreSQL
               +----- OPA ------+
 ```
 
-What runs today: `server` talking to PostgreSQL, both described below.
+What runs today: `server` talking to PostgreSQL, and the OPA policy, which is complete
+and tested but not yet called by anything. Parts 4 and 5 connect it.
 
 ### Server layers
 
@@ -53,6 +54,18 @@ open --submit--> in_review --approve--> approved
 
 The rules are specified in [docs/TICKET.md](docs/TICKET.md).
 
+### Authorization policy
+
+OPA answers two separate questions, each under its own name:
+
+| Decision | Question | Asked by | Input |
+|----------|----------|----------|-------|
+| `route_allowed` | May this role perform this action at all? | Gateway | `subject`, `action` |
+| `allowed` | May this person perform this action on this ticket? | Server | `subject`, `action`, `resource.openedBy` |
+
+The rules (P1 to P5) are listed in [docs/TICKET.md](docs/TICKET.md). Both decisions
+are served at `POST /v1/data/ticket/authz/<decision>`.
+
 ## Design decisions
 
 | Decision | Reasoning |
@@ -62,7 +75,11 @@ The rules are specified in [docs/TICKET.md](docs/TICKET.md).
 | Manual dependency injection, no framework | Dependencies are passed through constructors and wired in one place (`main.ts`), so the mechanism stays visible. |
 | Domain errors, HTTP status codes mapped at the edge | The domain throws `InvalidTicketError` or `InvalidTransitionError`; only the HTTP layer knows these mean 400 and 409. |
 | Parameterized SQL only | Values are sent separately from the query text, which rules out SQL injection by construction. |
-| Authorization kept out of the server for now | "Who may do what" is a separate concern and will live in OPA, not in the domain. |
+| State rules in the domain, authorization rules in OPA | "Can this ticket be approved now?" and "Can this person approve it?" are different questions. Each rule is written in exactly one place. |
+| Default deny | Both decisions start as `false`; rules only describe what is allowed. An unknown action or a user without roles is rejected without a rule of its own. |
+| Two decisions instead of one | The gateway does not know who opened a ticket. A separate `allowed` decision keeps ownership checks away from callers that cannot supply `resource`. |
+| A missing `resource` never grants access | Ownership rules compare against `resource.openedBy`; the reviewer read rule requires it explicitly. Both cases have tests. |
+| Deny tests assert `== false`, not `not` | In Rego a rule that does not match is undefined, and `not` treats undefined as false. Comparing with `false` proves the default exists, so the API returns `{"result": false}` instead of an empty `{}`. |
 | PostgreSQL in its own Terraform module | The module exposes only variables and outputs; it was moved there with `moved` blocks so no resource was recreated. |
 | Secrets stay out of the code | The database password is a sensitive variable supplied through an untracked `terraform.tfvars`; the server reads its connection string from `DATABASE_URL`. |
 
@@ -134,9 +151,19 @@ npm run typecheck   # TypeScript, no emit
 The tests run without a database or an HTTP server: the domain and use cases are
 exercised directly, with the in-memory repository standing in for PostgreSQL.
 
+```bash
+cd policy
+opa test . -v                              # 24 tests, one per row of the rule tables
+opa test . --coverage --format=json        # every line of authz.rego is exercised
+```
+
+Run `opa` from inside `policy/`: it loads every JSON and YAML file under the given
+directory as data, including `server/node_modules` if pointed at the repository root.
+
 ## Known limitations
 
-- No authorization yet: any caller can approve any ticket. This is part 3.
+- The policy exists but nothing enforces it yet: any caller can still approve any
+  ticket. The gateway (part 4) and the server (part 5) will ask OPA before acting.
 - The server trusts the `X-User-Id` header. That is only acceptable once the
   gateway (part 4) is the sole way to reach it.
 - The schema is applied by hand and must be re-applied after `terraform destroy`.
