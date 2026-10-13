@@ -69,8 +69,7 @@ func Authenticate(v *Verifier) func(http.Handler) http.Handler {
 				unauthorized(w)
 				return
 			}
-			ctx := context.WithValue(r.Context(), ctxKey{}, id)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
 		})
 	}
 }
@@ -84,4 +83,9 @@ func IdentityFrom(ctx context.Context) (Identity, bool) {
 func unauthorized(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
+}
+
+// WithIdentity stores id in ctx. Authenticate uses it; tests use it to stand in for a caller.
+func WithIdentity(ctx context.Context, id Identity) context.Context {
+	return context.WithValue(ctx, ctxKey{}, id)
 }

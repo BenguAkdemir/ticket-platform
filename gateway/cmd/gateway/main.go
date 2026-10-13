@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/golang-jwt/jwt/v5"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -11,10 +12,11 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"github.com/golang-jwt/jwt/v5"
 
 	"ticket-platform/gateway/internal/auth"
+	"ticket-platform/gateway/internal/authz"
 	"ticket-platform/gateway/internal/middleware"
+	"ticket-platform/gateway/internal/opa"
 )
 
 func main() {
@@ -26,7 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 
-		pemBytes, err := os.ReadFile(getenv("JWT_PUBLIC_KEY", "dev-keys/public.pem"))
+	pemBytes, err := os.ReadFile(getenv("JWT_PUBLIC_KEY", "dev-keys/public.pem"))
 	if err != nil {
 		logger.Error("cannot read public key", "err", err)
 		os.Exit(1)
@@ -55,8 +57,22 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok\n"))
 	})
-	mux.Handle("/", auth.Authenticate(verifier)(proxy))
+	guard := authz.Guard{
+		Decider: opa.New(getenv("OPA_URL", "http://localhost:8181"), 500*time.Millisecond),
+		Logger:  logger,
+	}
+	authenticate := auth.Authenticate(verifier)
 
+	routes := map[string]string{
+		"POST /tickets":              "ticket:open",
+		"GET /tickets/{id}":          "ticket:read",
+		"POST /tickets/{id}/submit":  "ticket:submit",
+		"POST /tickets/{id}/approve": "ticket:approve",
+		"POST /tickets/{id}/reject":  "ticket:reject",
+	}
+	for pattern, action := range routes {
+		mux.Handle(pattern, authenticate(guard.Require(action)(proxy)))
+	}
 	handler := middleware.RequestID(middleware.Logging(logger)(mux))
 
 	srv := &http.Server{

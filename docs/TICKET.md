@@ -84,9 +84,9 @@ Bir kullanıcı iki role birden sahip olabilir; P4'teki istisna bu yüzden var.
 | Header | İçerik |
 |---|---|
 | `X-User-Id` | Doğrulanmış token'daki `sub` |
-| `X-User-Roles` | Doğrulanmış token'daki `roles` |
+| `X-User-Roles` | Doğrulanmış token'daki `roles`, virgülle ayrılmış (`requester,reviewer`) |
 
-Server bu header'lara güvenir. Bunun tek dayanağı, 5. adımdan sonra server'a host'tan doğrudan erişilememesidir.
+Gateway, client'ın gönderdiği `X-User-*` header'larını ve `Authorization` header'ını siler; bu header'lar server'a yalnızca gateway'in yazdığı haliyle ulaşır. Server bu header'lara güvenir. Bunun tek dayanağı, 5. adımdan sonra server'a host'tan doğrudan erişilememesidir.
 
 ## OPA'ya gönderilen input
 
