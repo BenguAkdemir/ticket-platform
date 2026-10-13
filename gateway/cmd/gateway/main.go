@@ -6,7 +6,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -17,6 +16,7 @@ import (
 	"ticket-platform/gateway/internal/authz"
 	"ticket-platform/gateway/internal/middleware"
 	"ticket-platform/gateway/internal/opa"
+	"ticket-platform/gateway/internal/proxy"
 )
 
 func main() {
@@ -44,14 +44,7 @@ func main() {
 		getenv("JWT_AUDIENCE", "ticket-platform"),
 	)
 
-	proxy := &httputil.ReverseProxy{
-		Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(target)
-			r.SetXForwarded()
-			r.Out.Header.Set(middleware.RequestIDHeader, middleware.RequestIDFrom(r.In.Context()))
-		},
-		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
-	}
+	backend := proxy.New(target, slog.NewLogLogger(logger.Handler(), slog.LevelError))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +64,7 @@ func main() {
 		"POST /tickets/{id}/reject":  "ticket:reject",
 	}
 	for pattern, action := range routes {
-		mux.Handle(pattern, authenticate(guard.Require(action)(proxy)))
+		mux.Handle(pattern, authenticate(guard.Require(action)(backend)))
 	}
 	handler := middleware.RequestID(middleware.Logging(logger)(mux))
 

@@ -3,11 +3,11 @@ package opa
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-	"io"
 )
 
 func fakeOPA(t *testing.T, status int, body string) *httptest.Server {
