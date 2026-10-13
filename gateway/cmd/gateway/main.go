@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -11,19 +11,26 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"ticket-platform/gateway/internal/middleware"
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
 	target, err := url.Parse(getenv("SERVER_URL", "http://localhost:3000"))
 	if err != nil {
-		log.Fatalf("invalid SERVER_URL: %v", err)
+		logger.Error("invalid SERVER_URL", "err", err)
+		os.Exit(1)
 	}
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
 			r.SetXForwarded()
+			r.Out.Header.Set(middleware.RequestIDHeader, middleware.RequestIDFrom(r.In.Context()))
 		},
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 
 	mux := http.NewServeMux()
@@ -32,9 +39,11 @@ func main() {
 	})
 	mux.Handle("/", proxy)
 
+	handler := middleware.RequestID(middleware.Logging(logger)(mux))
+
 	srv := &http.Server{
 		Addr:              getenv("GATEWAY_ADDR", "localhost:8080"),
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -45,21 +54,22 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("gateway listening on %s, forwarding to %s", srv.Addr, target)
+		logger.Info("gateway listening", "addr", srv.Addr, "target", target.String())
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			logger.Error("server error", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	<-ctx.Done()
-	log.Print("shutting down")
+	logger.Info("shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown error: %v", err)
+		logger.Error("shutdown error", "err", err)
 	}
-	log.Print("stopped")
+	logger.Info("stopped")
 }
 
 func getenv(key, fallback string) string {
