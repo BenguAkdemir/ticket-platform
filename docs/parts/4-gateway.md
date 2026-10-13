@@ -57,6 +57,8 @@ request
 
 Timeout'lar 2. adımda, çünkü sonraki her adım güvenli varsayılanlara sahip bir server üzerinde çalışmalı.
 
+**Durum (2026-10-13):** 1–6 bitti. 7. adım (ölçüm) Bengü'nün kararıyla Part 5'ten sonraya ertelendi; gateway ve proxy o noktada ayrıca ayrıntılı ele alınacak.
+
 ## Deneyler
 
 | Deney | Neyi gösterir |

@@ -15,12 +15,10 @@ simple so the architecture stays in focus.
 | 1 | `infra/` | Terraform: providers, variables, state, modules | Done |
 | 2 | `server/` | Onion architecture and dependency inversion (Node.js, TypeScript) | Done |
 | 3 | `policy/` | Authorization rules separated from code (OPA, Rego) | Done |
-| 4 | `gateway/` | Reverse proxy and middleware chain (Go) | Planned |
-| 5 | Wiring | Everything started with a single `terraform apply` | Planned |
+| 4 | `gateway/` | Reverse proxy, middleware chain, JWT, policy enforcement (Go) | Done, load measurement pending |
+| 5 | Wiring | Everything started with a single `terraform apply` | In progress |
 
 ## Architecture
-
-Target request path once all parts are in place:
 
 ```
 client -> gateway (Go) -> server (Node.js) -> PostgreSQL
@@ -28,8 +26,41 @@ client -> gateway (Go) -> server (Node.js) -> PostgreSQL
               +----- OPA ------+
 ```
 
-What runs today: `server` talking to PostgreSQL, and the OPA policy, which is complete
-and tested but not yet called by anything. Parts 4 and 5 connect it.
+What runs today: all four components, started as separate local processes.
+The gateway authenticates and authorizes every request before it reaches the server.
+Part 5 moves them into containers so that only the gateway is reachable from outside.
+
+### Gateway
+
+Every request passes through the same chain:
+
+```
+request ID -> structured log -> route allowlist -> JWT (RS256) -> OPA route_allowed -> proxy -> server
+```
+
+| Step | Rejects with |
+|------|--------------|
+| Path or method not in the allowlist | 404 / 405 |
+| Missing, expired or invalid token; wrong `iss` or `aud` | 401 |
+| OPA says no | 403 |
+| OPA unreachable, slow or returns no decision | 503 (fail closed) |
+| Server unreachable | 502 |
+
+Before forwarding, the gateway deletes any `X-User-Id`, `X-User-Roles` and
+`Authorization` header sent by the client and writes `X-User-Id` and `X-User-Roles`
+from the verified token. `/healthz` answers without authentication and does not
+depend on the server.
+
+```
+gateway/
+  cmd/gateway/        Wiring: configuration, routes, server, shutdown
+  cmd/devtoken/       Signs development tokens
+  internal/auth/      JWT verification, identity in the request context
+  internal/authz/     Authorization middleware and its Decider interface
+  internal/opa/       OPA REST client
+  internal/proxy/     Reverse proxy and identity headers
+  internal/middleware/ Request ID and logging
+```
 
 ### Server layers
 
@@ -61,7 +92,7 @@ OPA answers two separate questions, each under its own name:
 | Decision | Question | Asked by | Input |
 |----------|----------|----------|-------|
 | `route_allowed` | May this role perform this action at all? | Gateway | `subject`, `action` |
-| `allowed` | May this person perform this action on this ticket? | Server | `subject`, `action`, `resource.openedBy` |
+| `allowed` | May this person perform this action on this ticket? | Server (part 5) | `subject`, `action`, `resource.openedBy` |
 
 The rules (P1 to P5) are listed in [docs/TICKET.md](docs/TICKET.md). Both decisions
 are served at `POST /v1/data/ticket/authz/<decision>`.
@@ -80,76 +111,101 @@ are served at `POST /v1/data/ticket/authz/<decision>`.
 | Two decisions instead of one | The gateway does not know who opened a ticket. A separate `allowed` decision keeps ownership checks away from callers that cannot supply `resource`. |
 | A missing `resource` never grants access | Ownership rules compare against `resource.openedBy`; the reviewer read rule requires it explicitly. Both cases have tests. |
 | Deny tests assert `== false`, not `not` | In Rego a rule that does not match is undefined, and `not` treats undefined as false. Comparing with `false` proves the default exists, so the API returns `{"result": false}` instead of an empty `{}`. |
+| Gateway written by hand on the standard library | The goal is to see what a gateway does, not to configure one. The only dependency is `golang-jwt`. |
+| Server timeouts and graceful shutdown | Zero values in `http.Server` mean no timeout. `ReadHeaderTimeout` closes connections that never finish their headers (Slowloris); verified with `nc`. |
+| Tokens signed with RS256; the gateway holds only the public key | A compromised gateway can verify tokens but cannot mint them. The algorithm, `exp`, `iss` and `aud` are all enforced. |
+| Explicit route allowlist | Only the five endpoints of the API are forwarded. Anything else is rejected at the gateway, so a new server endpoint is never exposed by accident. |
+| Fail closed | If OPA cannot answer, the request is rejected. Crashing OPA must not switch authorization off. A missing `result` in OPA's response is treated as an error, not as `false`. |
+| Identity headers rewritten, token not forwarded | The server trusts `X-User-*` only because the gateway removes the client's copies first. The server never sees the token it does not need. |
+| Interfaces defined by the consumer | `authz.Decider` lives next to the middleware that uses it; the OPA client satisfies it without knowing it exists. Same idea as the repository interface in the server. |
 | PostgreSQL in its own Terraform module | The module exposes only variables and outputs; it was moved there with `moved` blocks so no resource was recreated. |
-| Secrets stay out of the code | The database password is a sensitive variable supplied through an untracked `terraform.tfvars`; the server reads its connection string from `DATABASE_URL`. |
+| Secrets stay out of the code | The database password is a sensitive variable supplied through an untracked `terraform.tfvars`; signing keys are generated locally and ignored by git. |
 
 The full decision record, with sources, is in [docs/DECISIONS.md](docs/DECISIONS.md)
 and [docs/REFERENCES.md](docs/REFERENCES.md) (written in Turkish).
 
 ## Running it locally
 
-Requirements: Docker, Terraform 1.12 or newer, Node.js 24.
+Requirements: Docker, Terraform 1.12 or newer, Node.js 24, Go 1.22 or newer, OPA 1.0 or newer.
+Each block runs in its own terminal.
 
-**1. Infrastructure**
+**1. Infrastructure and schema**
 
 ```bash
 cd infra
 echo 'db_password = "choose-a-password"' > terraform.tfvars
 terraform init
 terraform apply
+docker exec -i ticket-postgres psql -U postgres < ../server/sql/001_tickets.sql
 ```
 
-**2. Database schema**
+**2. Server**
 
 ```bash
-cd ../server
-docker exec -i ticket-postgres psql -U postgres < sql/001_tickets.sql
-```
-
-**3. Server**
-
-```bash
+cd server
 npm install
 export DATABASE_URL=$(cd ../infra && terraform output -raw db_url)
 npm start
 ```
 
-**4. Try it**
+**3. Policy**
 
 ```bash
-curl -s -X POST localhost:3000/tickets \
-  -H "Content-Type: application/json" -H "X-User-Id: u1" \
-  -d '{"title": "Printer is broken"}'
+cd policy
+opa run --server ticket/authz.rego
+```
 
-curl -i -X POST localhost:3000/tickets/<id>/submit  -H "X-User-Id: u1"
-curl -i -X POST localhost:3000/tickets/<id>/approve -H "X-User-Id: u2"
+**4. Gateway**
+
+```bash
+cd gateway
+mkdir -p dev-keys
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out dev-keys/private.pem
+openssl pkey -in dev-keys/private.pem -pubout -out dev-keys/public.pem
+go run ./cmd/gateway
+```
+
+**5. Try it**, from `gateway/`:
+
+```bash
+REQUESTER=$(go run ./cmd/devtoken -sub u1 -roles requester)
+REVIEWER=$(go run ./cmd/devtoken -sub u2 -roles reviewer)
+
+curl -s -X POST localhost:8080/tickets \
+  -H "Authorization: Bearer $REQUESTER" \
+  -H "Content-Type: application/json" -d '{"title": "Printer is broken"}'
+
+curl -i -X POST localhost:8080/tickets/<id>/submit  -H "Authorization: Bearer $REQUESTER"
+curl -i -X POST localhost:8080/tickets/<id>/approve -H "Authorization: Bearer $REQUESTER"   # 403
+curl -i -X POST localhost:8080/tickets/<id>/approve -H "Authorization: Bearer $REVIEWER"    # 200
 ```
 
 To remove everything: `cd infra && terraform destroy`.
 
 ## API
 
-| Method and path | Purpose | Success |
-|-----------------|---------|---------|
-| `POST /tickets` | Open a ticket | 201 |
-| `GET /tickets/{id}` | Read a ticket | 200 |
-| `POST /tickets/{id}/submit` | Send for review | 200 |
-| `POST /tickets/{id}/approve` | Approve | 200 |
-| `POST /tickets/{id}/reject` | Reject, with a reason | 200 |
+Served through the gateway on `localhost:8080`. Every request needs
+`Authorization: Bearer <token>`.
 
-Errors: 400 invalid input, 401 missing `X-User-Id`, 404 unknown ticket,
-409 action not allowed in the ticket's current state.
+| Method and path | Action | Success |
+|-----------------|--------|---------|
+| `POST /tickets` | `ticket:open` | 201 |
+| `GET /tickets/{id}` | `ticket:read` | 200 |
+| `POST /tickets/{id}/submit` | `ticket:submit` | 200 |
+| `POST /tickets/{id}/approve` | `ticket:approve` | 200 |
+| `POST /tickets/{id}/reject` | `ticket:reject` | 200 |
+
+Errors: 400 invalid input, 401 missing or invalid token, 403 not allowed,
+404 unknown ticket or route, 409 action not allowed in the ticket's current state,
+502 server unreachable, 503 authorization unavailable.
 
 ## Tests
 
 ```bash
 cd server
-npm test            # unit tests for the domain and the use cases
+npm test            # domain and use cases, no database
 npm run typecheck   # TypeScript, no emit
 ```
-
-The tests run without a database or an HTTP server: the domain and use cases are
-exercised directly, with the in-memory repository standing in for PostgreSQL.
 
 ```bash
 cd policy
@@ -157,17 +213,27 @@ opa test . -v                              # 24 tests, one per row of the rule t
 opa test . --coverage --format=json        # every line of authz.rego is exercised
 ```
 
-Run `opa` from inside `policy/`: it loads every JSON and YAML file under the given
-directory as data, including `server/node_modules` if pointed at the repository root.
+```bash
+cd gateway
+go vet ./...
+go test ./...       # middleware, JWT cases, OPA client against a fake OPA, proxy against a fake server
+```
+
+None of the tests need a running database, OPA or server. Run each tool from its own
+directory: `opa` loads every JSON and YAML file under the given path as data,
+including `server/node_modules` if pointed at the repository root.
 
 ## Known limitations
 
-- The policy exists but nothing enforces it yet: any caller can still approve any
-  ticket. The gateway (part 4) and the server (part 5) will ask OPA before acting.
-- The server trusts the `X-User-Id` header. That is only acceptable once the
-  gateway (part 4) is the sole way to reach it.
+- **Ownership is not checked yet.** A user with the `reviewer` role can approve a
+  ticket they opened themselves, which breaks rule P4. The gateway can only ask
+  `route_allowed`, because it does not know who opened a ticket. Part 5 makes the
+  server ask `allowed` (OWASP API1:2023, Broken Object Level Authorization).
+- The server is still reachable directly on port 3000 and trusts `X-User-Id`.
+  Part 5 removes that port from the host, leaving the gateway as the only entry point.
 - The schema is applied by hand and must be re-applied after `terraform destroy`.
 - The PostgreSQL repository is verified manually, not by an automated test.
+- The gateway's latency cost has not been measured yet (step 7 of part 4).
 - Terraform state is local and contains the database password in plain text;
   it is excluded from version control.
 
