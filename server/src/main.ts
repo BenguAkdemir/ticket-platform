@@ -13,7 +13,8 @@ const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined){
     throw new Error("DATABASE_URL environment variable is not set");
 }
-const repository = new PostgresTicketRepository(new pg.Pool({ connectionString: databaseUrl }));
+const pool = new pg.Pool({ connectionString: databaseUrl });
+const repository = new PostgresTicketRepository(pool);
 
 const app = createApp({
   openTicket: new OpenTicket(repository, randomUUID),
@@ -23,6 +24,15 @@ const app = createApp({
   rejectTicket: new RejectTicket(repository),
 });
 
-app.listen(3000, () => {
-  console.log("server: http://localhost:3000");
+const server = app.listen(3000, () => {
+  console.log("server: listening on 3000");
 });
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    console.log(`server: ${signal} received, shutting down`);
+    server.close(() => {
+      pool.end().then(() => process.exit(0));
+    });
+  });
+}
