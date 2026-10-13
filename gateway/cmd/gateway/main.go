@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"net"
 
 	"ticket-platform/gateway/internal/auth"
 	"ticket-platform/gateway/internal/authz"
@@ -20,6 +21,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+	os.Exit(healthcheck(getenv("GATEWAY_ADDR", "localhost:8080")))
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	target, err := url.Parse(getenv("SERVER_URL", "http://localhost:3000"))
@@ -97,6 +101,24 @@ func main() {
 		logger.Error("shutdown error", "err", err)
 	}
 	logger.Info("stopped")
+}
+
+// healthcheck lets Docker probe the gateway from inside a container that has no shell or curl.
+func healthcheck(addr string) int {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 1
+	}
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://localhost:" + port + "/healthz")
+	if err != nil {
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
 
 func getenv(key, fallback string) string {

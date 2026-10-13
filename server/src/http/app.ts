@@ -56,6 +56,12 @@ export function createApp(useCases: UseCases): Express {
     return header;
   }
 
+    app.disable("x-powered-by");
+
+  app.get("/healthz", (_req, res) => {
+    res.send("ok\n");
+  });
+
   app.post("/tickets", async (req, res) => {
     const openedBy = userId(req.header("x-user-id"));
     const title = typeof req.body?.title === "string" ? req.body.title : "";
