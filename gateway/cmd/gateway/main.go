@@ -11,7 +11,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"github.com/golang-jwt/jwt/v5"
 
+	"ticket-platform/gateway/internal/auth"
 	"ticket-platform/gateway/internal/middleware"
 )
 
@@ -23,6 +25,22 @@ func main() {
 		logger.Error("invalid SERVER_URL", "err", err)
 		os.Exit(1)
 	}
+
+		pemBytes, err := os.ReadFile(getenv("JWT_PUBLIC_KEY", "dev-keys/public.pem"))
+	if err != nil {
+		logger.Error("cannot read public key", "err", err)
+		os.Exit(1)
+	}
+	publicKey, err := jwt.ParseRSAPublicKeyFromPEM(pemBytes)
+	if err != nil {
+		logger.Error("invalid public key", "err", err)
+		os.Exit(1)
+	}
+	verifier := auth.NewVerifier(
+		publicKey,
+		getenv("JWT_ISSUER", "ticket-devtoken"),
+		getenv("JWT_AUDIENCE", "ticket-platform"),
+	)
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -37,7 +55,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok\n"))
 	})
-	mux.Handle("/", proxy)
+	mux.Handle("/", auth.Authenticate(verifier)(proxy))
 
 	handler := middleware.RequestID(middleware.Logging(logger)(mux))
 
