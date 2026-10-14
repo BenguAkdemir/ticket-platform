@@ -26,12 +26,6 @@ resource "docker_container" "postgres" {
     container_path = "/var/lib/postgresql"
   }
 
-  ports {
-    internal = 5432
-    external = var.db_port
-    ip       = "127.0.0.1"
-  }
-
   healthcheck {
     test     = ["CMD", "pg_isready", "-U", "postgres"]
     interval = "5s"

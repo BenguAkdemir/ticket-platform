@@ -2,7 +2,7 @@ locals {
   apps = {
     server = {
       context = abspath("${path.module}/../server")
-      sources = ["Dockerfile", "package.json", "package-lock.json", "src/**"]
+      sources = ["Dockerfile", "package.json", "package-lock.json", "src/**", "sql/**"]
     }
     gateway = {
       context = abspath("${path.module}/../gateway")

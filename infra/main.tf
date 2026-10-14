@@ -6,7 +6,6 @@ module "postgres" {
   source = "./modules/postgres"
 
   db_password  = var.db_password
-  db_port      = var.db_port
   network_name = docker_network.platform.name
 }
 
