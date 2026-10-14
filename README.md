@@ -16,7 +16,7 @@ simple so the architecture stays in focus.
 | 2 | `server/` | Onion architecture and dependency inversion (Node.js, TypeScript) | Done |
 | 3 | `policy/` | Authorization rules separated from code (OPA, Rego) | Done |
 | 4 | `gateway/` | Reverse proxy, middleware chain, JWT, policy enforcement (Go) | Done, load measurement pending |
-| 5 | Wiring | Everything started with a single `terraform apply` | In progress |
+| 5 | Wiring | Everything started with a single `terraform apply` | Done |
 
 ## Architecture
 
@@ -26,9 +26,17 @@ client -> gateway (Go) -> server (Node.js) -> PostgreSQL
               +----- OPA ------+
 ```
 
-What runs today: all four components, started as separate local processes.
-The gateway authenticates and authorizes every request before it reaches the server.
-Part 5 moves them into containers so that only the gateway is reachable from outside.
+All four components run as containers on one Docker network, created by a single
+`terraform apply`. Only the gateway publishes a port, and only on `127.0.0.1`; the server,
+OPA and PostgreSQL cannot be reached from the host.
+
+Authorization is checked at two points, each answering the question it can answer:
+
+| Where | Question | Decision |
+|-------|----------|----------|
+| Gateway | Is this role allowed to perform this action at all? | `route_allowed` |
+| Server | Is this person allowed to perform this action on this ticket? | `allowed` |
+| Domain | Is the ticket in a state that allows it? | rules S1 to S5 |
 
 ### Gateway
 
@@ -71,6 +79,7 @@ server/src/
   infrastructure/   Repository implementations: in-memory, PostgreSQL
   http/             Express routes, error-to-status mapping
   main.ts           Composition root
+sql/                Migrations, applied by the server at startup
 ```
 
 Dependencies point inwards only. `domain/` imports nothing; `express` is imported
@@ -92,7 +101,7 @@ OPA answers two separate questions, each under its own name:
 | Decision | Question | Asked by | Input |
 |----------|----------|----------|-------|
 | `route_allowed` | May this role perform this action at all? | Gateway | `subject`, `action` |
-| `allowed` | May this person perform this action on this ticket? | Server (part 5) | `subject`, `action`, `resource.openedBy` |
+| `allowed` | May this person perform this action on this ticket? | Server | `subject`, `action`, `resource.openedBy` |
 
 The rules (P1 to P5) are listed in [docs/TICKET.md](docs/TICKET.md). Both decisions
 are served at `POST /v1/data/ticket/authz/<decision>`.
@@ -118,6 +127,11 @@ are served at `POST /v1/data/ticket/authz/<decision>`.
 | Fail closed | If OPA cannot answer, the request is rejected. Crashing OPA must not switch authorization off. A missing `result` in OPA's response is treated as an error, not as `false`. |
 | Identity headers rewritten, token not forwarded | The server trusts `X-User-*` only because the gateway removes the client's copies first. The server never sees the token it does not need. |
 | Interfaces defined by the consumer | `authz.Decider` lives next to the middleware that uses it; the OPA client satisfies it without knowing it exists. Same idea as the repository interface in the server. |
+| Ownership checked in the server, behind an interface | Only the server knows who opened a ticket. Use cases ask an `AccessPolicy` before any change; the OPA adapter lives in `infrastructure/`, tests use a fake. A denied request leaves the ticket untouched. |
+| Schema owned by the application | The server applies the files in `sql/` at startup, each in one transaction with its record in `schema_migrations`. Terraform manages infrastructure, not tables. |
+| One port on the host | Only the gateway is published. The database is inspected with `docker exec`, not through an open port. |
+| Small images, no root | The gateway is built in two stages into a 16 MB distroless image without a shell. The server runs as the `node` user. Both stop cleanly on `SIGTERM`. |
+| `for_each` for image builds, a module for containers | The two builds share one shape, so `for_each` fits. The three containers differ in almost every argument, so a shared `modules/service` keeps the rules (localhost-only ports, read-only mounts) in one place while each call stays explicit. |
 | PostgreSQL in its own Terraform module | The module exposes only variables and outputs; it was moved there with `moved` blocks so no resource was recreated. |
 | Secrets stay out of the code | The database password is a sensitive variable supplied through an untracked `terraform.tfvars`; signing keys are generated locally and ignored by git. |
 
@@ -126,46 +140,27 @@ and [docs/REFERENCES.md](docs/REFERENCES.md) (written in Turkish).
 
 ## Running it locally
 
-Requirements: Docker, Terraform 1.12 or newer, Node.js 24, Go 1.22 or newer, OPA 1.0 or newer.
-Each block runs in its own terminal.
-
-**1. Infrastructure and schema**
+Requirements: Docker, Terraform 1.12 or newer, Go 1.22 or newer (for `devtoken`),
+OpenSSL. Node.js and OPA are only needed to run the tests.
 
 ```bash
-cd infra
-echo 'db_password = "choose-a-password"' > terraform.tfvars
-terraform init
-terraform apply
-docker exec -i ticket-postgres psql -U postgres < ../server/sql/001_tickets.sql
-```
-
-**2. Server**
-
-```bash
-cd server
-npm install
-export DATABASE_URL=$(cd ../infra && terraform output -raw db_url)
-npm start
-```
-
-**3. Policy**
-
-```bash
-cd policy
-opa run --server ticket/authz.rego
-```
-
-**4. Gateway**
-
-```bash
+# 1. Development signing keys (ignored by git)
 cd gateway
 mkdir -p dev-keys
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out dev-keys/private.pem
 openssl pkey -in dev-keys/private.pem -pubout -out dev-keys/public.pem
-go run ./cmd/gateway
+
+# 2. Everything else
+cd ../infra
+echo 'db_password = "choose-a-password"' > terraform.tfvars
+terraform init
+terraform apply
 ```
 
-**5. Try it**, from `gateway/`:
+Terraform builds both images, starts PostgreSQL, OPA, the server and the gateway, and
+waits until the server and gateway report healthy. The server creates the schema itself.
+
+**Try it**, from `gateway/`:
 
 ```bash
 REQUESTER=$(go run ./cmd/devtoken -sub u1 -roles requester)
@@ -176,10 +171,14 @@ curl -s -X POST localhost:8080/tickets \
   -H "Content-Type: application/json" -d '{"title": "Printer is broken"}'
 
 curl -i -X POST localhost:8080/tickets/<id>/submit  -H "Authorization: Bearer $REQUESTER"
-curl -i -X POST localhost:8080/tickets/<id>/approve -H "Authorization: Bearer $REQUESTER"   # 403
+curl -i -X POST localhost:8080/tickets/<id>/approve -H "Authorization: Bearer $REQUESTER"   # 403, wrong role
 curl -i -X POST localhost:8080/tickets/<id>/approve -H "Authorization: Bearer $REVIEWER"    # 200
 ```
 
+A user holding both roles still cannot approve their own ticket:
+`devtoken -sub u1 -roles requester,reviewer` gets 403 from the server.
+
+To inspect the database: `docker exec -it ticket-postgres psql -U postgres`.
 To remove everything: `cd infra && terraform destroy`.
 
 ## API
@@ -195,9 +194,9 @@ Served through the gateway on `localhost:8080`. Every request needs
 | `POST /tickets/{id}/approve` | `ticket:approve` | 200 |
 | `POST /tickets/{id}/reject` | `ticket:reject` | 200 |
 
-Errors: 400 invalid input, 401 missing or invalid token, 403 not allowed,
-404 unknown ticket or route, 409 action not allowed in the ticket's current state,
-502 server unreachable, 503 authorization unavailable.
+Errors: 400 invalid input, 401 missing or invalid token, 403 not allowed (by role at the
+gateway, or by ownership at the server), 404 unknown ticket or route, 409 action not allowed
+in the ticket's current state, 502 server unreachable, 503 authorization unavailable.
 
 ## Tests
 
@@ -225,17 +224,17 @@ including `server/node_modules` if pointed at the repository root.
 
 ## Known limitations
 
-- **Ownership is not checked yet.** A user with the `reviewer` role can approve a
-  ticket they opened themselves, which breaks rule P4. The gateway can only ask
-  `route_allowed`, because it does not know who opened a ticket. Part 5 makes the
-  server ask `allowed` (OWASP API1:2023, Broken Object Level Authorization).
-- The server is still reachable directly on port 3000 and trusts `X-User-Id`.
-  Part 5 removes that port from the host, leaving the gateway as the only entry point.
-- The schema is applied by hand and must be re-applied after `terraform destroy`.
-- The PostgreSQL repository is verified manually, not by an automated test.
+- Migrations assume a single server instance. Two instances starting at the same time
+  could try to apply the same file; production setups use a database lock or run
+  migrations as a separate deploy step.
+- A ticket that does not exist returns 404 while one the caller may not see returns 403,
+  so a caller can tell the two apart.
+- The server's integration with PostgreSQL and OPA is verified by hand, not by
+  automated tests.
 - The gateway's latency cost has not been measured yet (step 7 of part 4).
 - Terraform state is local and contains the database password in plain text;
   it is excluded from version control.
+- Signing keys are generated locally; there is no identity provider.
 
 ## Documentation
 

@@ -79,6 +79,8 @@ Dürüst liste; bunlar kurs ve dokümanla çalışılır.
 
 Parça 2, 3 ve 4 bittikten sonra buraya dönülür.
 
+**Durum (2026-10-14): bitti.** Uygulamada üç değişiklik oldu: container'lar `for_each` yerine ortak bir `modules/service` ile üretildi (`for_each` sensitive değer kabul etmiyor ve container'ların şekli birbirinden farklı; `for_each` image build'lerinde kullanıldı). Schema'yı Terraform değil, server açılışta uyguluyor. PostgreSQL'in portu da kapatıldı.
+
 | # | Adım |
 |---|---|
 | 1 | `server/` ve `gateway/` için birer Dockerfile; `docker_image` içindeki `build` block ile Terraform'dan build et |

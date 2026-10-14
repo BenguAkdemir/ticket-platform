@@ -77,7 +77,8 @@ Sertifika çalışmasının yanında, parça parça ilerler.
 |---|---|
 | Gateway'i elle yazmak | Firmalar hazır ürün kullanır. Buradaki amaç reverse proxy ve middleware'in içini görmek |
 | Container'ları Terraform ile yönetmek | Production'da uygulama container'ı böyle yönetilmez. Buradaki amaç Terraform'u gerçek kaynak üzerinde çalışmak |
-| Kayıt sahipliği kontrolünün 5. adıma kalması | O adıma kadar sistem OWASP API1 açığına karşı korumasızdır; bilerek ertelendi |
+| Kayıt sahipliği kontrolünün 5. adıma kalması | O adıma kadar sistem OWASP API1 açığına karşı korumasızdı; bilerek ertelendi. 2026-10-14'te kapandı: server her işlemden önce `allowed` kararını soruyor |
+| Migration'ları server'ın açılışta uygulaması | Birden fazla kopya aynı anda açılırsa yarışabilir; production'da lock ya da ayrı bir deploy adımı kullanılır |
 
 ## Bilerek dışarıda
 
