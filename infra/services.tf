@@ -56,6 +56,7 @@ module "server" {
 
   env = {
     DATABASE_URL = "postgresql://postgres:${var.db_password}@${module.postgres.host}:5432/postgres"
+    OPA_URL      = "http://${module.opa.name}:8181"
   }
 
   healthcheck = ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/healthz"]

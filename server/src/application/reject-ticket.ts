@@ -1,19 +1,21 @@
+import type { Ticket } from "../domain/ticket.ts";
 import type { TicketRepository } from "../domain/ticket-repository.ts";
-import { TicketNotFoundError } from "./errors.ts";
+import { loadTicketFor } from "./access-policy.ts";
+import type { AccessPolicy, Actor } from "./access-policy.ts";
 
 export class RejectTicket {
-    readonly #repository: TicketRepository;
+  readonly #repository: TicketRepository;
+  readonly #policy: AccessPolicy;
 
-    constructor(repository: TicketRepository) {
-        this.#repository = repository;
-    }
+  constructor(repository: TicketRepository, policy: AccessPolicy) {
+    this.#repository = repository;
+    this.#policy = policy;
+  }
 
-    async execute(input: { ticketId: string; decidedBy: string; reason:string }): Promise<void> {
-        const ticket = await this.#repository.findById(input.ticketId);
-        if (ticket === null) {
-            throw new TicketNotFoundError(`ticket bulunamadı: ${input.ticketId}`);
-        }
-        ticket.reject(input.decidedBy, input.reason);
-        await this.#repository.save(ticket);
-    }   
+  async execute(input: { ticketId: string; actor: Actor; reason: string }): Promise<Ticket> {
+    const ticket = await loadTicketFor(this.#repository, this.#policy, input.ticketId, input.actor, "ticket:reject");
+    ticket.reject(input.actor.id, input.reason);
+    await this.#repository.save(ticket);
+    return ticket;
+  }
 }
